@@ -4,6 +4,17 @@ import fetch from "node-fetch";
 const app = express();
 app.use(express.json());
 
+// CORS 설정 (카카오 지식관리센터에서 API 호출 시 필요)
+app.use((req, res, next) => {
+  res.header("Access-Control-Allow-Origin", "*");
+  res.header("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+  res.header("Access-Control-Allow-Headers", "Content-Type, Authorization");
+  if (req.method === "OPTIONS") {
+    return res.sendStatus(200);
+  }
+  next();
+});
+
 const NOTION_TOKEN = process.env.NOTION_TOKEN;
 const DATABASE_ID = process.env.DATABASE_ID;
 const PORT = process.env.PORT || 3000;
@@ -71,6 +82,23 @@ app.get("/", (req, res) => {
 });
 
 /**
+ * 카테고리 유효성 검증
+ * - 카테고리는 중간에 빈값을 가질 수 없음 (Category1에 값이 있으면 Category2도 있어야 함)
+ */
+function validateCategories(categories) {
+  let lastNonEmptyIndex = -1;
+  for (let i = 0; i < categories.length; i++) {
+    if (categories[i] && categories[i].trim() !== "") {
+      lastNonEmptyIndex = i;
+    } else if (lastNonEmptyIndex >= 0 && i > lastNonEmptyIndex + 1) {
+      // 중간에 빈값이 있으면 안됨
+      return false;
+    }
+  }
+  return true;
+}
+
+/**
  * ✅ 카카오 지식 업로드(API 연결)용
  * - 카카오 API 형식: { values: [[...]], schema_type: "1.0" }
  * - Category1~5 모두 필수 (카카오 스키마 요구사항)
@@ -90,8 +118,8 @@ app.get("/kakao/knowledge", async (req, res) => {
           "", // Category3
           "", // Category4 (필수: 빈 문자열이라도 포함)
           "", // Category5 (필수: 빈 문자열이라도 포함)
-          "카페 가입 도와줘", // Question
-          "카페 가입하기 버튼 클릭 후 질문 작성하면 1~2일 내 승인됩니다.", // Answer
+          "카페 가입 도와줘", // Question (최대 50자)
+          "카페 가입하기 버튼 클릭 후 질문 작성하면 1~2일 내 승인됩니다.", // Answer (최대 1000자, Landing URL 사용 시 400자)
           "https://cafe.naver.com/linkus16", // Landing URL
           "" // Image URL
         ]
@@ -120,14 +148,46 @@ app.get("/kakao/knowledge", async (req, res) => {
         const results = notionData?.results || [];
 
         // Notion 데이터를 카카오 스키마로 변환
-        // Question과 Answer가 있는 것만 필터링
         values = results
           .map((page, index) => convertNotionToKakaoSchema(page, index))
-          .filter(row => row[6] && row[7]); // Question(인덱스 6)과 Answer(인덱스 7)가 있는 것만
+          .filter(row => {
+            // Question(인덱스 6)과 Answer(인덱스 7)가 있는지 확인
+            if (!row[6] || !row[7]) return false;
+            
+            // Question 최대 50자 제한
+            if (row[6].length > 50) {
+              console.warn(`Question too long (${row[6].length} chars): ${row[6].substring(0, 30)}...`);
+              return false;
+            }
+            
+            // Answer 최대 1000자 제한 (Landing URL 사용 시 400자)
+            const hasLandingUrl = row[8] && row[8].trim() !== "";
+            const maxAnswerLength = hasLandingUrl ? 400 : 1000;
+            if (row[7].length > maxAnswerLength) {
+              console.warn(`Answer too long (${row[7].length} chars, max: ${maxAnswerLength})`);
+              return false;
+            }
+            
+            // 카테고리 유효성 검증 (Category1~5)
+            const categories = [row[1], row[2], row[3], row[4], row[5]];
+            if (!validateCategories(categories)) {
+              console.warn(`Invalid category structure: ${categories.join(", ")}`);
+              return false;
+            }
+            
+            return true;
+          });
       }
     }
 
+    // 디버깅: 응답 데이터 로깅 (개발 환경에서만)
+    if (process.env.NODE_ENV !== "production") {
+      console.log("Response data:", JSON.stringify({ values, schema_type: "1.0" }, null, 2));
+    }
+
     // 카카오 API 형식에 맞게 응답
+    // Content-Type 헤더 명시적 설정
+    res.setHeader("Content-Type", "application/json; charset=utf-8");
     return res.status(200).json({
       values: values,
       schema_type: "1.0"
@@ -135,6 +195,7 @@ app.get("/kakao/knowledge", async (req, res) => {
   } catch (error) {
     console.error("Error in /kakao/knowledge:", error);
     // 에러 발생 시 빈 values 반환
+    res.setHeader("Content-Type", "application/json; charset=utf-8");
     return res.status(200).json({
       values: [],
       schema_type: "1.0"
