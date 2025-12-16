@@ -6,20 +6,19 @@ app.use(express.json());
 
 const NOTION_TOKEN = process.env.NOTION_TOKEN;
 const DATABASE_ID = process.env.DATABASE_ID;
+const PORT = process.env.PORT || 3000;
 
 /**
- * 헬스 체크용
+ * 헬스 체크
  */
-app.get("/", (req, res) => {
-  res.send("OK");
-});
-
-// 기존 루트가 ok만 뱉는 상태면 유지해도 됨
 app.get("/", (req, res) => {
   res.send("ok");
 });
 
-// ✅ 카카오 지식 업로드용 (반드시 배열 JSON)
+/**
+ * ✅ 카카오 지식 업로드(API 연결)용
+ * - 반드시 "배열(JSON)"로 응답해야 함
+ */
 app.get("/kakao/knowledge", (req, res) => {
   res.status(200).json([
     {
@@ -36,15 +35,22 @@ app.get("/kakao/knowledge", (req, res) => {
   ]);
 });
 
-app.listen(PORT, () => {
-  console.log(`Server running on ${PORT}`);
-});
-
 /**
- * 카카오 챗봇 → 노션 지식 조회
+ * 카카오 챗봇 스킬용 (사용자 질문 → 노션 조회 → 답변)
  */
 app.post("/knowledge", async (req, res) => {
   try {
+    if (!NOTION_TOKEN || !DATABASE_ID) {
+      return res.json({
+        version: "2.0",
+        template: {
+          outputs: [
+            { simpleText: { text: "서버 설정(NOTION_TOKEN / DATABASE_ID)이 비어있어요." } }
+          ]
+        }
+      });
+    }
+
     const notionRes = await fetch(
       `https://api.notion.com/v1/databases/${DATABASE_ID}/query`,
       {
@@ -54,9 +60,7 @@ app.post("/knowledge", async (req, res) => {
           "Notion-Version": "2022-06-28",
           "Content-Type": "application/json"
         },
-        body: JSON.stringify({
-          page_size: 5
-        })
+        body: JSON.stringify({ page_size: 5 })
       }
     );
 
@@ -70,13 +74,7 @@ app.post("/knowledge", async (req, res) => {
     return res.json({
       version: "2.0",
       template: {
-        outputs: [
-          {
-            simpleText: {
-              text: answer
-            }
-          }
-        ]
+        outputs: [{ simpleText: { text: answer } }]
       }
     });
   } catch (error) {
@@ -84,19 +82,12 @@ app.post("/knowledge", async (req, res) => {
     return res.json({
       version: "2.0",
       template: {
-        outputs: [
-          {
-            simpleText: {
-              text: "서버 오류가 발생했어요."
-            }
-          }
-        ]
+        outputs: [{ simpleText: { text: "서버 오류가 발생했어요." } }]
       }
     });
   }
 });
 
-const port = process.env.PORT || 3000;
-app.listen(port, () => {
-  console.log("Server running on port", port);
+app.listen(PORT, () => {
+  console.log(`Server running on ${PORT}`);
 });
