@@ -176,11 +176,14 @@ app.get("/kakao/knowledge", async (req, res) => {
       } else {
         const notionData = await notionRes.json();
         const results = notionData?.results || [];
+        
+        console.log(`✅ Notion 데이터 조회 성공: ${results.length}개 항목 발견`);
 
         // Notion 데이터를 카카오 스키마로 변환
-        values = results
-          .map((page, index) => convertNotionToKakaoSchema(page, index))
-          .filter(row => {
+        const beforeFilter = results.map((page, index) => convertNotionToKakaoSchema(page, index));
+        console.log(`📝 변환 완료: ${beforeFilter.length}개 항목`);
+        
+        values = beforeFilter.filter(row => {
             // Question(인덱스 6)과 Answer(인덱스 7)가 있는지 확인
             if (!row[6] || !row[7]) return false;
             
@@ -207,12 +210,18 @@ app.get("/kakao/knowledge", async (req, res) => {
             
             return true;
           });
+        
+        console.log(`✅ 필터링 완료: ${values.length}개 항목이 카카오 API 형식으로 변환됨`);
+        if (values.length === 0 && beforeFilter.length > 0) {
+          console.warn("⚠️ 모든 데이터가 필터링되었습니다. 검증 규칙을 확인하세요.");
+        }
       }
     }
 
-    // 디버깅: 응답 데이터 로깅 (개발 환경에서만)
-    if (process.env.NODE_ENV !== "production") {
-      console.log("Response data:", JSON.stringify({ values, schema_type: "1.0" }, null, 2));
+    // 응답 데이터 로깅
+    console.log(`📤 카카오 API 응답: ${values.length}개 항목 전송`);
+    if (values.length > 0) {
+      console.log(`   첫 번째 항목: FAQ_No=${values[0][0]}, Question="${values[0][6]?.substring(0, 30)}..."`);
     }
 
     // 카카오 API 형식에 맞게 응답
