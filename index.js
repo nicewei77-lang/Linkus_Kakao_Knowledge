@@ -10,6 +10,7 @@ const PORT = process.env.PORT || 3000;
 
 /**
  * Notion DB 데이터를 카카오 지식 업로드 스키마로 변환
+ * - 카카오 API 형식: 배열 형태 [FAQ_No, Category1~5, Question, Answer, Landing URL, Image URL]
  * - Category1~5 모두 필수 (없으면 빈 문자열)
  * - 불필요한 필드(Active, Last edited time 등) 제외
  */
@@ -41,19 +42,25 @@ function convertNotionToKakaoSchema(notionPage, index) {
   const category4 = getText("Category4") || getText("Category 4") || "";
   const category5 = getText("Category5") || getText("Category 5") || "";
 
-  return {
-    FAQ_No: index + 1,
-    Category1: category1,
-    Category2: category2,
-    Category3: category3,
-    Category4: category4, // 필수: 빈 문자열이라도 포함
-    Category5: category5, // 필수: 빈 문자열이라도 포함
-    Question: getText("Question") || getText("question") || "",
-    Answer: getText("Answer") || getText("answer") || "",
-    "Landing URL": getUrl("Landing URL") || "",
-    "Landing URL Button Name": getText("Landing URL Button Name") || "",
-    "Image Info (URL)": getUrl("Image Info (URL)") || ""
-  };
+  const question = getText("Question") || getText("question") || "";
+  const answer = getText("Answer") || getText("answer") || "";
+  const landingUrl = getUrl("Landing URL") || "";
+  const imageUrl = getUrl("Image Info (URL)") || getUrl("Image URL") || "";
+
+  // 카카오 API 형식: 배열 형태로 반환
+  // 순서: FAQ_No, Category1, Category2, Category3, Category4, Category5, Question, Answer, Landing URL, Image URL
+  return [
+    String(index + 1), // FAQ_No (문자열로 변환)
+    category1,
+    category2,
+    category3,
+    category4, // 필수: 빈 문자열이라도 포함
+    category5, // 필수: 빈 문자열이라도 포함
+    question,
+    answer,
+    landingUrl,
+    imageUrl
+  ];
 }
 
 /**
@@ -65,64 +72,73 @@ app.get("/", (req, res) => {
 
 /**
  * ✅ 카카오 지식 업로드(API 연결)용
- * - 반드시 "배열(JSON)"로 응답해야 함
+ * - 카카오 API 형식: { values: [[...]], schema_type: "1.0" }
  * - Category1~5 모두 필수 (카카오 스키마 요구사항)
  * - Notion DB에서 데이터를 가져와 카카오 스키마로 변환
  */
 app.get("/kakao/knowledge", async (req, res) => {
   try {
+    let values = [];
+
     // Notion DB 연결이 없는 경우 임시 하드코딩 데이터 반환 (MVP용)
     if (!NOTION_TOKEN || !DATABASE_ID) {
-      return res.status(200).json([
+      values = [
+        [
+          "1", // FAQ_No
+          "온보딩", // Category1
+          "카페", // Category2
+          "", // Category3
+          "", // Category4 (필수: 빈 문자열이라도 포함)
+          "", // Category5 (필수: 빈 문자열이라도 포함)
+          "카페 가입 도와줘", // Question
+          "카페 가입하기 버튼 클릭 후 질문 작성하면 1~2일 내 승인됩니다.", // Answer
+          "https://cafe.naver.com/linkus16", // Landing URL
+          "" // Image URL
+        ]
+      ];
+    } else {
+      // Notion DB에서 데이터 조회
+      const notionRes = await fetch(
+        `https://api.notion.com/v1/databases/${DATABASE_ID}/query`,
         {
-          FAQ_No: 1,
-          Category1: "온보딩",
-          Category2: "카페",
-          Category3: "",
-          Category4: "", // 필수: 카카오 스키마에 맞춰 추가
-          Category5: "", // 필수: 카카오 스키마에 맞춰 추가
-          Question: "카페 가입 도와줘",
-          Answer: "카페 가입하기 버튼 클릭 후 질문 작성하면 1~2일 내 승인됩니다.",
-          "Landing URL": "https://cafe.naver.com/linkus16",
-          "Landing URL Button Name": "카페 바로가기",
-          "Image Info (URL)": ""
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${NOTION_TOKEN}`,
+            "Notion-Version": "2022-06-28",
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({ page_size: 100 }) // 최대 100개까지 조회
         }
-      ]);
-    }
+      );
 
-    // Notion DB에서 데이터 조회
-    const notionRes = await fetch(
-      `https://api.notion.com/v1/databases/${DATABASE_ID}/query`,
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${NOTION_TOKEN}`,
-          "Notion-Version": "2022-06-28",
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({ page_size: 100 }) // 최대 100개까지 조회
+      if (!notionRes.ok) {
+        console.error("Notion API error:", await notionRes.text());
+        // 에러 발생 시 빈 values 반환
+        values = [];
+      } else {
+        const notionData = await notionRes.json();
+        const results = notionData?.results || [];
+
+        // Notion 데이터를 카카오 스키마로 변환
+        // Question과 Answer가 있는 것만 필터링
+        values = results
+          .map((page, index) => convertNotionToKakaoSchema(page, index))
+          .filter(row => row[6] && row[7]); // Question(인덱스 6)과 Answer(인덱스 7)가 있는 것만
       }
-    );
-
-    if (!notionRes.ok) {
-      console.error("Notion API error:", await notionRes.text());
-      // 에러 발생 시 빈 배열 반환 (또는 기본 데이터)
-      return res.status(200).json([]);
     }
 
-    const notionData = await notionRes.json();
-    const results = notionData?.results || [];
-
-    // Notion 데이터를 카카오 스키마로 변환
-    const kakaoKnowledge = results
-      .map((page, index) => convertNotionToKakaoSchema(page, index))
-      .filter(item => item.Question && item.Answer); // Question과 Answer가 있는 것만 필터링
-
-    return res.status(200).json(kakaoKnowledge);
+    // 카카오 API 형식에 맞게 응답
+    return res.status(200).json({
+      values: values,
+      schema_type: "1.0"
+    });
   } catch (error) {
     console.error("Error in /kakao/knowledge:", error);
-    // 에러 발생 시 빈 배열 반환 (카카오는 빈 배열도 허용)
-    return res.status(200).json([]);
+    // 에러 발생 시 빈 values 반환
+    return res.status(200).json({
+      values: [],
+      schema_type: "1.0"
+    });
   }
 });
 
