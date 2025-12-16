@@ -83,15 +83,19 @@ app.get("/", (req, res) => {
 
 /**
  * 카테고리 유효성 검증
- * - 카테고리는 중간에 빈값을 가질 수 없음 (Category1에 값이 있으면 Category2도 있어야 함)
+ * - 카테고리는 중간에 빈값을 가질 수 없음
+ * - 예: Category1="A", Category2="", Category3="B" ❌ (중간에 빈값)
+ * - 예: Category1="A", Category2="B", Category3="", Category4="", Category5="" ✅ (끝에 빈값은 OK)
  */
 function validateCategories(categories) {
-  let lastNonEmptyIndex = -1;
+  let foundEmpty = false;
   for (let i = 0; i < categories.length; i++) {
-    if (categories[i] && categories[i].trim() !== "") {
-      lastNonEmptyIndex = i;
-    } else if (lastNonEmptyIndex >= 0 && i > lastNonEmptyIndex + 1) {
-      // 중간에 빈값이 있으면 안됨
+    const isEmpty = !categories[i] || categories[i].trim() === "";
+    
+    if (isEmpty) {
+      foundEmpty = true; // 빈값을 발견
+    } else if (foundEmpty) {
+      // 빈값 이후에 다시 값이 나타나면 중간에 빈값이 있는 것
       return false;
     }
   }
@@ -140,9 +144,35 @@ app.get("/kakao/knowledge", async (req, res) => {
       );
 
       if (!notionRes.ok) {
-        console.error("Notion API error:", await notionRes.text());
-        // 에러 발생 시 빈 values 반환
-        values = [];
+        const errorText = await notionRes.text();
+        console.error("Notion API error:", errorText);
+        
+        // 데이터베이스 ID가 잘못된 경우 (페이지 ID를 사용한 경우)
+        const errorData = JSON.parse(errorText);
+        if (errorData.code === "validation_error" && errorData.message.includes("is a page, not a database")) {
+          console.error("⚠️ DATABASE_ID가 페이지 ID입니다. 올바른 데이터베이스 ID를 사용하세요.");
+          console.error("📖 데이터베이스 ID 찾는 방법:");
+          console.error("   1. Notion에서 데이터베이스를 테이블 뷰로 열기");
+          console.error("   2. URL에서 데이터베이스 ID 확인 (32자리 하이픈 포함 UUID)");
+          console.error("   3. 또는 데이터베이스 페이지의 '...' 메뉴 → 'Copy link' 사용");
+        }
+        
+        // 에러 발생 시 하드코딩된 샘플 데이터 반환 (서비스 중단 방지)
+        console.log("⚠️ Notion 연결 실패, 샘플 데이터 반환");
+        values = [
+          [
+            "1",
+            "온보딩",
+            "카페",
+            "",
+            "",
+            "",
+            "카페 가입 도와줘",
+            "카페 가입하기 버튼 클릭 후 질문 작성하면 1~2일 내 승인됩니다.",
+            "https://cafe.naver.com/linkus16",
+            ""
+          ]
+        ];
       } else {
         const notionData = await notionRes.json();
         const results = notionData?.results || [];
