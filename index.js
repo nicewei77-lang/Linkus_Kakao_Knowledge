@@ -14,6 +14,32 @@ app.get("/", (req, res) => {
   res.send("OK");
 });
 
+// 기존 루트가 ok만 뱉는 상태면 유지해도 됨
+app.get("/", (req, res) => {
+  res.send("ok");
+});
+
+// ✅ 카카오 지식 업로드용 (반드시 배열 JSON)
+app.get("/kakao/knowledge", (req, res) => {
+  res.status(200).json([
+    {
+      FAQ_No: 1,
+      Category1: "온보딩",
+      Category2: "카페",
+      Category3: "",
+      Question: "카페 가입 도와줘",
+      Answer: "카페 가입하기 버튼 클릭 후 질문 작성하면 1~2일 내 승인됩니다.",
+      "Landing URL": "https://cafe.naver.com/linkus16",
+      "Landing URL Button Name": "카페 바로가기",
+      "Image Info (URL)": ""
+    }
+  ]);
+});
+
+app.listen(PORT, () => {
+  console.log(`Server running on ${PORT}`);
+});
+
 /**
  * 카카오 챗봇 → 노션 지식 조회
  */
