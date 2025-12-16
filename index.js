@@ -183,31 +183,39 @@ app.get("/kakao/knowledge", async (req, res) => {
         const beforeFilter = results.map((page, index) => convertNotionToKakaoSchema(page, index));
         console.log(`📝 변환 완료: ${beforeFilter.length}개 항목`);
         
-        values = beforeFilter.filter(row => {
+        values = beforeFilter.filter((row, filterIndex) => {
+            const faqNo = row[0];
+            const question = row[6];
+            const answer = row[7];
+            
             // Question(인덱스 6)과 Answer(인덱스 7)가 있는지 확인
-            if (!row[6] || !row[7]) return false;
+            if (!question || !answer) {
+              console.warn(`❌ FAQ_No=${faqNo} 필터링: Question 또는 Answer가 비어있음 (Q: "${question}", A: "${answer}")`);
+              return false;
+            }
             
             // Question 최대 50자 제한
-            if (row[6].length > 50) {
-              console.warn(`Question too long (${row[6].length} chars): ${row[6].substring(0, 30)}...`);
+            if (question.length > 50) {
+              console.warn(`❌ FAQ_No=${faqNo} 필터링: Question이 너무 김 (${question.length}자): "${question.substring(0, 30)}..."`);
               return false;
             }
             
             // Answer 최대 1000자 제한 (Landing URL 사용 시 400자)
             const hasLandingUrl = row[8] && row[8].trim() !== "";
             const maxAnswerLength = hasLandingUrl ? 400 : 1000;
-            if (row[7].length > maxAnswerLength) {
-              console.warn(`Answer too long (${row[7].length} chars, max: ${maxAnswerLength})`);
+            if (answer.length > maxAnswerLength) {
+              console.warn(`❌ FAQ_No=${faqNo} 필터링: Answer가 너무 김 (${answer.length}자, 최대: ${maxAnswerLength}자, Landing URL: ${hasLandingUrl ? "있음" : "없음"})`);
               return false;
             }
             
             // 카테고리 유효성 검증 (Category1~5)
             const categories = [row[1], row[2], row[3], row[4], row[5]];
             if (!validateCategories(categories)) {
-              console.warn(`Invalid category structure: ${categories.join(", ")}`);
+              console.warn(`❌ FAQ_No=${faqNo} 필터링: 카테고리 구조 오류: [${categories.map((c, i) => `Category${i+1}="${c}"`).join(", ")}]`);
               return false;
             }
             
+            console.log(`✅ FAQ_No=${faqNo} 검증 통과: "${question.substring(0, 30)}${question.length > 30 ? "..." : ""}"`);
             return true;
           });
         
